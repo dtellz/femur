@@ -56,7 +56,7 @@ export class ThirdPersonCamera {
   }
 
   getRight(out) {
-    out.set(-Math.cos(this.yaw), 0, Math.sin(this.yaw));
+    out.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     return out;
   }
 
