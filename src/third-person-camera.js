@@ -49,14 +49,14 @@ export class ThirdPersonCamera {
     }, { passive: true });
   }
 
-  // Returns the horizontal forward direction (for character movement)
+  // Returns the horizontal forward direction (away from camera, toward character facing)
   getForward(out) {
-    out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    out.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     return out;
   }
 
   getRight(out) {
-    out.set(Math.sin(this.yaw - Math.PI / 2), 0, Math.cos(this.yaw - Math.PI / 2));
+    out.set(-Math.cos(this.yaw), 0, Math.sin(this.yaw));
     return out;
   }
 
