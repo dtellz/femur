@@ -38,8 +38,8 @@ export class ThirdPersonCamera {
 
     document.addEventListener("mousemove", (e) => {
       if (!this.isLocked) return;
-      this.yaw -= e.movementX * this.sensitivity;
-      this.pitch += e.movementY * this.sensitivity;
+      this.yaw += e.movementX * this.sensitivity;
+      this.pitch -= e.movementY * this.sensitivity;
       this.pitch = Math.max(this.pitchMin, Math.min(this.pitchMax, this.pitch));
     });
 
