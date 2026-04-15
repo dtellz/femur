@@ -19,8 +19,8 @@ export function createCharacter() {
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
   const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-  leftEye.position.set(-0.1, TOTAL_HEIGHT * 0.75, -CAPSULE_RADIUS + 0.02);
-  rightEye.position.set(0.1, TOTAL_HEIGHT * 0.75, -CAPSULE_RADIUS + 0.02);
+  leftEye.position.set(-0.1, TOTAL_HEIGHT * 0.75, CAPSULE_RADIUS - 0.02);
+  rightEye.position.set(0.1, TOTAL_HEIGHT * 0.75, CAPSULE_RADIUS - 0.02);
   group.add(leftEye, rightEye);
 
   return group;
