@@ -1,6 +1,7 @@
 import * as THREE from "three";
-import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 import { SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
+import { createCharacter, CharacterController } from "./character.js";
+import { ThirdPersonCamera } from "./third-person-camera.js";
 
 // --- Scene setup ---
 const scene = new THREE.Scene();
@@ -12,7 +13,6 @@ const camera = new THREE.PerspectiveCamera(
   0.01,
   1000
 );
-camera.position.set(0, 1.5, 4);
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -23,57 +23,14 @@ document.body.appendChild(renderer.domElement);
 const spark = new SparkRenderer({ renderer });
 scene.add(spark);
 
-// --- FPS controls (pointer lock + WASD) ---
-const controls = new PointerLockControls(camera, renderer.domElement);
-scene.add(controls.object);
-
+// --- Input tracking ---
 const keys = {};
-const MOVE_SPEED = 3.0;
-const SPRINT_MULTIPLIER = 2.0;
-
-window.addEventListener("keydown", (e) => { keys[e.code] = true; });
+window.addEventListener("keydown", (e) => {
+  keys[e.code] = true;
+  // Prevent Space from scrolling the page
+  if (e.code === "Space") e.preventDefault();
+});
 window.addEventListener("keyup", (e) => { keys[e.code] = false; });
-
-// Click canvas to lock pointer
-renderer.domElement.addEventListener("click", () => {
-  if (!controls.isLocked) controls.lock();
-});
-
-// Show/hide crosshair on lock state change
-controls.addEventListener("lock", () => {
-  crosshair.style.display = "block";
-  instructions.style.display = "none";
-});
-controls.addEventListener("unlock", () => {
-  crosshair.style.display = "none";
-  instructions.style.display = "flex";
-});
-
-function updateMovement(delta) {
-  if (!controls.isLocked) return;
-
-  const speed = MOVE_SPEED * (keys["ShiftLeft"] ? SPRINT_MULTIPLIER : 1.0) * delta;
-  const direction = new THREE.Vector3();
-
-  // Forward/back (W/S)
-  if (keys["KeyW"]) direction.z -= 1;
-  if (keys["KeyS"]) direction.z += 1;
-
-  // Strafe left/right (A/D)
-  if (keys["KeyA"]) direction.x -= 1;
-  if (keys["KeyD"]) direction.x += 1;
-
-  // Up/down (Space/Ctrl)
-  if (keys["Space"]) direction.y += 1;
-  if (keys["ControlLeft"] || keys["ControlRight"]) direction.y -= 1;
-
-  if (direction.length() > 0) {
-    direction.normalize();
-    controls.moveRight(direction.x * speed);
-    controls.moveForward(-direction.z * speed);
-    camera.position.y += direction.y * speed;
-  }
-}
 
 // --- Loading UI ---
 const loadingEl = document.getElementById("loading");
@@ -85,26 +42,10 @@ function updateProgress(pct, msg) {
   if (msg) progressText.textContent = msg;
 }
 
-// --- HUD elements ---
-const crosshair = document.createElement("div");
-crosshair.style.cssText =
-  "position:fixed;top:50%;left:50%;width:12px;height:12px;transform:translate(-50%,-50%);" +
-  "border:1.5px solid rgba(255,255,255,0.6);border-radius:50%;pointer-events:none;display:none;z-index:5;";
-document.body.appendChild(crosshair);
-
-const instructions = document.createElement("div");
-instructions.style.cssText =
-  "position:fixed;bottom:2rem;left:0;right:0;display:flex;justify-content:center;" +
-  "pointer-events:none;z-index:5;";
-instructions.innerHTML =
-  '<div style="background:rgba(0,0,0,0.7);color:#aaa;padding:0.5rem 1.2rem;border-radius:6px;' +
-  'font-family:system-ui,sans-serif;font-size:0.8rem;letter-spacing:0.03em;">' +
-  "Click to play &mdash; WASD move, Mouse look, Shift sprint, Space/Ctrl up/down, Esc pause</div>";
-document.body.appendChild(instructions);
-
 // --- Load the world splat ---
 const worldSplat = new SplatMesh({
   url: "https://sparkjs.dev/assets/splats/valley.spz",
+  raycastable: true,
   onProgress: (progress) => {
     const pct = Math.round(progress * 100);
     updateProgress(pct, `Loading world... ${pct}%`);
@@ -118,9 +59,54 @@ const worldSplat = new SplatMesh({
   },
 });
 
-// Correct orientation (splats often need a rotation to be upright)
 worldSplat.quaternion.set(1, 0, 0, 0);
 scene.add(worldSplat);
+
+// --- Character ---
+const character = createCharacter();
+character.position.set(0, 3, 0); // start slightly above to drop onto ground
+scene.add(character);
+
+const controller = new CharacterController(character, [worldSplat]);
+
+// --- Third-person camera ---
+const camController = new ThirdPersonCamera(camera, renderer.domElement, character);
+
+// Initialize camera position behind character
+camController.currentPos.set(
+  character.position.x,
+  character.position.y + 3,
+  character.position.z + 5
+);
+camController.currentLookAt.copy(character.position);
+
+// --- HUD ---
+const crosshair = document.createElement("div");
+crosshair.style.cssText =
+  "position:fixed;top:50%;left:50%;width:8px;height:8px;transform:translate(-50%,-50%);" +
+  "background:rgba(255,255,255,0.5);border-radius:50%;pointer-events:none;display:none;z-index:5;";
+document.body.appendChild(crosshair);
+
+const instructions = document.createElement("div");
+instructions.style.cssText =
+  "position:fixed;bottom:2rem;left:0;right:0;display:flex;justify-content:center;" +
+  "pointer-events:none;z-index:5;";
+instructions.innerHTML =
+  '<div style="background:rgba(0,0,0,0.7);color:#aaa;padding:0.5rem 1.2rem;border-radius:6px;' +
+  'font-family:system-ui,sans-serif;font-size:0.8rem;letter-spacing:0.03em;">' +
+  "Click to play &mdash; WASD move, Mouse look, Shift sprint, Space jump, Scroll zoom, Esc pause</div>";
+document.body.appendChild(instructions);
+
+const debugEl = document.createElement("div");
+debugEl.style.cssText =
+  "position:fixed;top:1rem;left:1rem;color:#666;font-family:monospace;font-size:0.7rem;" +
+  "pointer-events:none;z-index:5;line-height:1.5;";
+document.body.appendChild(debugEl);
+
+camController.onLockChange = (locked) => {
+  crosshair.style.display = locked ? "block" : "none";
+  instructions.style.display = locked ? "none" : "flex";
+};
 
 // --- Handle resize ---
 window.addEventListener("resize", () => {
@@ -131,8 +117,41 @@ window.addEventListener("resize", () => {
 
 // --- Render loop ---
 const clock = new THREE.Clock();
+const inputDir = new THREE.Vector3();
+const forward = new THREE.Vector3();
+const right = new THREE.Vector3();
+
 renderer.setAnimationLoop(() => {
-  const delta = clock.getDelta();
-  updateMovement(delta);
+  const delta = Math.min(clock.getDelta(), 0.05); // cap delta to avoid physics explosions
+
+  // --- Build input direction relative to camera ---
+  inputDir.set(0, 0, 0);
+
+  if (camController.isLocked) {
+    camController.getForward(forward);
+    camController.getRight(right);
+
+    if (keys["KeyW"]) inputDir.add(forward);
+    if (keys["KeyS"]) inputDir.sub(forward);
+    if (keys["KeyD"]) inputDir.add(right);
+    if (keys["KeyA"]) inputDir.sub(right);
+
+    if (inputDir.length() > 0) inputDir.normalize();
+  }
+
+  const jump = camController.isLocked && !!keys["Space"];
+  const sprint = !!keys["ShiftLeft"];
+
+  // --- Update systems ---
+  controller.update(delta, inputDir, jump, sprint);
+  camController.update(delta);
+
+  // --- Debug HUD ---
+  const pos = character.position;
+  debugEl.textContent =
+    `pos: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}\n` +
+    `vel Y: ${controller.velocity.y.toFixed(1)}  grounded: ${controller.grounded}\n` +
+    `ground Y: ${controller.groundY !== null ? controller.groundY.toFixed(2) : "none"}`;
+
   renderer.render(scene, camera);
 });
