@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
 import { createCharacter, CharacterController } from "./character.js";
 import { ThirdPersonCamera } from "./third-person-camera.js";
+import { spawnNPCs, NPC_MODELS } from "./npc.js";
 
 // --- Scene setup ---
 const scene = new THREE.Scene();
@@ -18,6 +19,13 @@ const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
+
+// --- Lighting (needed for the character model's PBR materials) ---
+const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+dirLight.position.set(5, 10, 5);
+scene.add(dirLight);
 
 // --- Spark renderer ---
 const spark = new SparkRenderer({ renderer });
@@ -62,23 +70,41 @@ const worldSplat = new SplatMesh({
 worldSplat.quaternion.set(1, 0, 0, 0);
 scene.add(worldSplat);
 
-// --- Character ---
-const character = createCharacter();
-character.position.set(0, 3, 0); // start slightly above to drop onto ground
-scene.add(character);
+// --- Character (async load) ---
+let controller = null;
+let camController = null;
 
-const controller = new CharacterController(character, [worldSplat]);
+createCharacter().then((character) => {
+  character.position.set(0, 3, 0);
+  scene.add(character);
 
-// --- Third-person camera ---
-const camController = new ThirdPersonCamera(camera, renderer.domElement, character);
+  controller = new CharacterController(character, [worldSplat]);
+  camController = new ThirdPersonCamera(camera, renderer.domElement, character);
 
-// Initialize camera position behind character
-camController.currentPos.set(
-  character.position.x,
-  character.position.y + 3,
-  character.position.z + 5
-);
-camController.currentLookAt.copy(character.position);
+  camController.currentPos.set(
+    character.position.x,
+    character.position.y + 3,
+    character.position.z + 5
+  );
+  camController.currentLookAt.copy(character.position);
+
+  camController.onLockChange = (locked) => {
+    crosshair.style.display = locked ? "block" : "none";
+    instructions.style.display = locked ? "none" : "flex";
+  };
+});
+
+// --- NPCs ---
+let npcs = [];
+const PLAYER_SPAWN = new THREE.Vector3(0, 3, 0);
+
+spawnNPCs(scene, PLAYER_SPAWN, [
+  { preset: NPC_MODELS.robot, offset: new THREE.Vector3(3, 0, -2),  wanderRadius: 3 },
+  { preset: NPC_MODELS.robot, offset: new THREE.Vector3(-3, 0, -1), wanderRadius: 4 },
+  { preset: NPC_MODELS.robot, offset: new THREE.Vector3(2, 0, 3),   wanderRadius: 3 },
+  { preset: NPC_MODELS.robot, offset: new THREE.Vector3(-2, 0, 4),  wanderRadius: 2.5 },
+  { preset: NPC_MODELS.robot, offset: new THREE.Vector3(0, 0, -4),  wanderRadius: 3.5 },
+], [worldSplat]).then((loaded) => { npcs = loaded; });
 
 // --- HUD ---
 const crosshair = document.createElement("div");
@@ -103,11 +129,6 @@ debugEl.style.cssText =
   "pointer-events:none;z-index:5;line-height:1.5;";
 document.body.appendChild(debugEl);
 
-camController.onLockChange = (locked) => {
-  crosshair.style.display = locked ? "block" : "none";
-  instructions.style.display = locked ? "none" : "flex";
-};
-
 // --- Handle resize ---
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -122,36 +143,40 @@ const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
 
 renderer.setAnimationLoop(() => {
-  const delta = Math.min(clock.getDelta(), 0.05); // cap delta to avoid physics explosions
+  const delta = Math.min(clock.getDelta(), 0.05);
 
-  // --- Build input direction relative to camera ---
-  inputDir.set(0, 0, 0);
+  if (controller && camController) {
+    // --- Build input direction relative to camera ---
+    inputDir.set(0, 0, 0);
 
-  if (camController.isLocked) {
-    camController.getForward(forward);
-    camController.getRight(right);
+    if (camController.isLocked) {
+      camController.getForward(forward);
+      camController.getRight(right);
 
-    if (keys["KeyW"]) inputDir.add(forward);
-    if (keys["KeyS"]) inputDir.sub(forward);
-    if (keys["KeyD"]) inputDir.add(right);
-    if (keys["KeyA"]) inputDir.sub(right);
+      if (keys["KeyW"]) inputDir.add(forward);
+      if (keys["KeyS"]) inputDir.sub(forward);
+      if (keys["KeyD"]) inputDir.add(right);
+      if (keys["KeyA"]) inputDir.sub(right);
 
-    if (inputDir.length() > 0) inputDir.normalize();
+      if (inputDir.length() > 0) inputDir.normalize();
+    }
+
+    const jump = camController.isLocked && !!keys["Space"];
+    const sprint = !!keys["ShiftLeft"];
+
+    controller.update(delta, inputDir, jump, sprint);
+    camController.update(delta);
+
+    // Update NPCs
+    for (const npc of npcs) npc.update(delta);
+
+    // --- Debug HUD ---
+    const pos = controller.character.position;
+    debugEl.textContent =
+      `pos: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}\n` +
+      `vel Y: ${controller.velocity.y.toFixed(1)}  grounded: ${controller.grounded}\n` +
+      `ground Y: ${controller.groundY !== null ? controller.groundY.toFixed(2) : "none"}`;
   }
-
-  const jump = camController.isLocked && !!keys["Space"];
-  const sprint = !!keys["ShiftLeft"];
-
-  // --- Update systems ---
-  controller.update(delta, inputDir, jump, sprint);
-  camController.update(delta);
-
-  // --- Debug HUD ---
-  const pos = character.position;
-  debugEl.textContent =
-    `pos: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}\n` +
-    `vel Y: ${controller.velocity.y.toFixed(1)}  grounded: ${controller.grounded}\n` +
-    `ground Y: ${controller.groundY !== null ? controller.groundY.toFixed(2) : "none"}`;
 
   renderer.render(scene, camera);
 });

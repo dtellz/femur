@@ -1,27 +1,56 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-const CAPSULE_RADIUS = 0.25;
-const CAPSULE_HEIGHT = 1.0;
-const TOTAL_HEIGHT = CAPSULE_HEIGHT + CAPSULE_RADIUS * 2;
+const MODEL_URL = "https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb";
+const MODEL_SCALE = 0.35;
+const CROSSFADE_DURATION = 0.2;
 
-export function createCharacter() {
+export async function createCharacter() {
   const group = new THREE.Group();
 
-  // Capsule body
-  const bodyGeo = new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HEIGHT, 8, 16);
-  const bodyMat = new THREE.MeshBasicMaterial({ color: 0x44aaff });
-  const body = new THREE.Mesh(bodyGeo, bodyMat);
-  body.position.y = TOTAL_HEIGHT / 2;
-  group.add(body);
+  const loader = new GLTFLoader();
+  const gltf = await loader.loadAsync(MODEL_URL);
+  const model = gltf.scene;
 
-  // Eye dots so you can tell which way the character faces
-  const eyeGeo = new THREE.SphereGeometry(0.05, 8, 8);
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-  const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-  leftEye.position.set(-0.1, TOTAL_HEIGHT * 0.75, CAPSULE_RADIUS - 0.02);
-  rightEye.position.set(0.1, TOTAL_HEIGHT * 0.75, CAPSULE_RADIUS - 0.02);
-  group.add(leftEye, rightEye);
+  model.scale.setScalar(MODEL_SCALE);
+  model.rotation.y = 0;
+  group.add(model);
+
+  // Animation setup
+  const mixer = new THREE.AnimationMixer(model);
+  const clips = {};
+  for (const clip of gltf.animations) {
+    clips[clip.name] = mixer.clipAction(clip);
+  }
+
+  // Start in idle
+  const idle = clips["Idle"];
+  const walk = clips["Walking"];
+  const run = clips["Running"];
+
+  if (idle) idle.play();
+
+  let currentAction = idle;
+
+  function crossfadeTo(nextAction) {
+    if (!nextAction || nextAction === currentAction) return;
+    nextAction.reset().setEffectiveWeight(1).play();
+    if (currentAction) currentAction.crossFadeTo(nextAction, CROSSFADE_DURATION, true);
+    currentAction = nextAction;
+  }
+
+  group.userData = {
+    mixer,
+    setAnimationState(moving, sprinting) {
+      if (!moving) {
+        crossfadeTo(idle);
+      } else if (sprinting) {
+        crossfadeTo(run);
+      } else {
+        crossfadeTo(walk);
+      }
+    },
+  };
 
   return group;
 }
@@ -29,18 +58,19 @@ export function createCharacter() {
 export class CharacterController {
   constructor(character, splatMeshes) {
     this.character = character;
-    this.splatMeshes = splatMeshes; // array of SplatMesh to raycast against
+    this.splatMeshes = splatMeshes;
 
     // Physics state
     this.velocity = new THREE.Vector3();
     this.grounded = false;
+    this.isMoving = false;
 
     // Physics constants
     this.gravity = -15;
     this.jumpSpeed = 6;
     this.moveSpeed = 3.5;
     this.sprintMultiplier = 2.0;
-    this.groundOffset = 0; // feet Y offset above raycast hit
+    this.groundOffset = 0;
 
     // Raycast helpers
     this.raycaster = new THREE.Raycaster();
@@ -48,14 +78,15 @@ export class CharacterController {
     this.rayOrigin = new THREE.Vector3();
     this.rayDir = new THREE.Vector3(0, -1, 0);
 
-    // Ground sampling: cache ground height and update every N frames
+    // Ground sampling
     this.groundY = null;
     this.frameCount = 0;
-    this.sampleInterval = 2; // raycast every N frames
+    this.sampleInterval = 2;
+    this.probeHeight = 10;
 
-    // Capsule dimensions for ground probe
-    this.feetOffset = 0;
-    this.probeHeight = 10; // cast from this far above character base
+    // Smooth rotation
+    this.targetRotationY = 0;
+    this.rotationSpeed = 10;
   }
 
   sampleGround() {
@@ -78,10 +109,24 @@ export class CharacterController {
     this.character.position.x += inputDir.x * speed;
     this.character.position.z += inputDir.z * speed;
 
-    // Face movement direction
-    if (inputDir.x !== 0 || inputDir.z !== 0) {
-      const angle = Math.atan2(inputDir.x, inputDir.z);
-      this.character.rotation.y = angle;
+    // Smooth rotation toward movement direction
+    this.isMoving = inputDir.x !== 0 || inputDir.z !== 0;
+    if (this.isMoving) {
+      this.targetRotationY = Math.atan2(inputDir.x, inputDir.z);
+      // Smooth lerp toward target angle
+      let diff = this.targetRotationY - this.character.rotation.y;
+      // Wrap to [-PI, PI]
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      this.character.rotation.y += diff * Math.min(1, this.rotationSpeed * delta);
+    }
+
+    // --- Animation ---
+    if (this.character.userData.setAnimationState) {
+      this.character.userData.setAnimationState(this.isMoving, sprint && this.isMoving);
+    }
+    if (this.character.userData.mixer) {
+      this.character.userData.mixer.update(delta);
     }
 
     // --- Ground detection ---
@@ -105,7 +150,6 @@ export class CharacterController {
       this.velocity.y = 0;
       this.grounded = true;
     } else if (this.groundY === null) {
-      // No ground found - use a fallback floor
       if (this.character.position.y <= -10) {
         this.character.position.set(0, 5, 0);
         this.velocity.y = 0;
