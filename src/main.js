@@ -142,8 +142,22 @@ const inputDir = new THREE.Vector3();
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
 
+// FPS counter
+let fpsFrames = 0;
+let fpsTime = 0;
+let fpsDisplay = 0;
+
 renderer.setAnimationLoop(() => {
   const delta = Math.min(clock.getDelta(), 0.05);
+
+  // FPS tracking
+  fpsFrames++;
+  fpsTime += delta;
+  if (fpsTime >= 0.5) {
+    fpsDisplay = Math.round(fpsFrames / fpsTime);
+    fpsFrames = 0;
+    fpsTime = 0;
+  }
 
   if (controller && camController) {
     // --- Build input direction relative to camera ---
@@ -173,6 +187,7 @@ renderer.setAnimationLoop(() => {
     // --- Debug HUD ---
     const pos = controller.character.position;
     debugEl.textContent =
+      `FPS: ${fpsDisplay}\n` +
       `pos: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}\n` +
       `vel Y: ${controller.velocity.y.toFixed(1)}  grounded: ${controller.grounded}\n` +
       `ground Y: ${controller.groundY !== null ? controller.groundY.toFixed(2) : "none"}`;

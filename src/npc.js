@@ -92,8 +92,8 @@ export class NPC {
     this.gravity = -15;
     this.grounded = false;
     this.probeHeight = 10;
-    this.frameCount = 0;
-    this.sampleInterval = 2;
+    this.frameCount = Math.floor(Math.random() * 10); // stagger across NPCs
+    this.sampleInterval = 10;
 
     this._pickNewTarget();
     this._pickIdleDuration();
